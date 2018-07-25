@@ -1,6 +1,6 @@
 // Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
 
-namespace WixToolset
+namespace WixToolset.Core
 {
     using System;
     using System.Diagnostics;
@@ -13,11 +13,13 @@ namespace WixToolset
     using System.Xml;
     using System.Xml.Linq;
     using WixToolset.Data;
+    using WixToolset.Extensibility;
+    using WixToolset.Extensibility.Services;
 
     /// <summary>
     /// Common Wix utility methods and types.
     /// </summary>
-    internal static class Common
+    public static class Common
     {
         //-------------------------------------------------------------------------------------------------
         // Layout of an Access Mask (from http://technet.microsoft.com/en-us/library/cc783530(WS.10).aspx)
@@ -89,9 +91,7 @@ namespace WixToolset
         // FILE_ALL_ACCESS           (STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0x1FF)
         internal static readonly string[] FilePermissions = { "Read", "Write", "Append", "ReadExtendedAttributes", "WriteExtendedAttributes", "Execute", "FileAllRights", "ReadAttributes", "WriteAttributes" };
 
-        internal static readonly string[] ReservedFileNames = { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" };
-
-        internal static readonly Regex WixVariableRegex = new Regex(@"(\!|\$)\((?<namespace>loc|wix|bind|bindpath)\.(?<fullname>(?<name>[_A-Za-z][0-9A-Za-z_]+)(\.(?<scope>[_A-Za-z][0-9A-Za-z_\.]*))?)(\=(?<value>.+?))?\)", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.ExplicitCapture);
+        public static readonly Regex WixVariableRegex = new Regex(@"(\!|\$)\((?<namespace>loc|wix|bind|bindpath)\.(?<fullname>(?<name>[_A-Za-z][0-9A-Za-z_]+)(\.(?<scope>[_A-Za-z][0-9A-Za-z_\.]*))?)(\=(?<value>.+?))?\)", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.ExplicitCapture);
 
         internal const char CustomRowFieldSeparator = '\x85';
 
@@ -112,7 +112,7 @@ namespace WixToolset
         /// <param name="path">The temporary directory to delete.</param>
         /// <param name="messageHandler">The message handler.</param>
         /// <returns>True if all files were deleted, false otherwise.</returns>
-        internal static bool DeleteTempFiles(string path, IMessageHandler messageHandler)
+        internal static bool DeleteTempFiles(string path, IMessaging messageHandler)
         {
             // try three times and give up with a warning if the temp files aren't gone by then
             int retryLimit = 3;
@@ -134,7 +134,7 @@ namespace WixToolset
                     }
                     else
                     {
-                        messageHandler.OnMessage(WixWarnings.AccessDeniedForDeletion(null, path));
+                        messageHandler.Write(WarningMessages.AccessDeniedForDeletion(null, path));
                         return false;
                     }
                 }
@@ -147,7 +147,7 @@ namespace WixToolset
                 {
                     if (i == (retryLimit - 1)) // last try failed still, give up
                     {
-                        messageHandler.OnMessage(WixWarnings.DirectoryInUse(null, path));
+                        messageHandler.Write(WarningMessages.DirectoryInUse(null, path));
                         return false;
                     }
 
@@ -170,15 +170,14 @@ namespace WixToolset
         /// <exception cref="ArgumentNullException"><paramref name="value"/> is null.</exception>
         /// <exception cref="NotSupportedException">The value doesn't not represent a valid code page name or integer value.</exception>
         /// <exception cref="WixException">The code page is invalid for summary information.</exception>
-        internal static int GetValidCodePage(string value, bool allowNoChange = false, bool onlyAnsi = false, SourceLineNumber sourceLineNumbers = null)
+        public static int GetValidCodePage(string value, bool allowNoChange = false, bool onlyAnsi = false, SourceLineNumber sourceLineNumbers = null)
         {
-            int codePage;
-            Encoding encoding;
-
             try
             {
+                Encoding encoding;
+
                 // check if a integer as a string was passed
-                if (Int32.TryParse(value, out codePage))
+                if (Int32.TryParse(value, out int codePage))
                 {
                     if (0 == codePage)
                     {
@@ -205,7 +204,7 @@ namespace WixToolset
                     codePage = encoding.CodePage;
                     if (0 > codePage || Int16.MaxValue < codePage)
                     {
-                        throw new WixException(WixErrors.InvalidSummaryInfoCodePage(sourceLineNumbers, codePage));
+                        throw new WixException(ErrorMessages.InvalidSummaryInfoCodePage(sourceLineNumbers, codePage));
                     }
                 }
 
@@ -329,7 +328,7 @@ namespace WixToolset
                 case "true":
                     return true;
                 default:
-                    throw new WixException(WixErrors.IllegalAttributeValue(sourceLineNumbers, elementName, attributeName, value, "no", "yes"));
+                    throw new WixException(ErrorMessages.IllegalAttributeValue(sourceLineNumbers, elementName, attributeName, value, "no", "yes"));
             }
         }
 
@@ -366,9 +365,9 @@ namespace WixToolset
         /// Generate a new Windows Installer-friendly guid.
         /// </summary>
         /// <returns>A new guid.</returns>
-        internal static string GenerateGuid()
+        public static string GenerateGuid()
         {
-            return Guid.NewGuid().ToString("B").ToUpper(CultureInfo.InvariantCulture);
+            return Guid.NewGuid().ToString("B").ToUpperInvariant();
         }
 
         /// <summary>
@@ -435,7 +434,7 @@ namespace WixToolset
         /// <param name="fileAttribute">The FileAttribute to change on each file.</param>
         /// <param name="messageHandler">The message handler.</param>
         /// <param name="markAttribute">If true, add the attribute to each file. If false, remove it.</param>
-        private static void RecursiveFileAttributes(string path, FileAttributes fileAttribute, bool markAttribute, IMessageHandler messageHandler)
+        private static void RecursiveFileAttributes(string path, FileAttributes fileAttribute, bool markAttribute, IMessaging messageHandler)
         {
             foreach (string subDirectory in Directory.GetDirectories(path))
             {
@@ -460,12 +459,12 @@ namespace WixToolset
                 }
                 catch (UnauthorizedAccessException)
                 {
-                    messageHandler.OnMessage(WixWarnings.AccessDeniedForSettingAttributes(null, filePath));
+                    messageHandler.Write(WarningMessages.AccessDeniedForSettingAttributes(null, filePath));
                 }
             }
         }
 
-        internal static string GetFileHash(string path)
+        public static string GetFileHash(string path)
         {
             using (SHA1Managed managed = new SHA1Managed())
             {
@@ -478,6 +477,147 @@ namespace WixToolset
         }
 
         /// <summary>
+        /// Takes an id, and demodularizes it (if possible).
+        /// </summary>
+        /// <remarks>
+        /// If the output type is a module, returns a demodularized version of an id. Otherwise, returns the id.
+        /// </remarks>
+        /// <param name="outputType">The type of the output to bind.</param>
+        /// <param name="modularizationGuid">The modularization GUID.</param>
+        /// <param name="id">The id to demodularize.</param>
+        /// <returns>The demodularized id.</returns>
+        public static string Demodularize(OutputType outputType, string modularizationGuid, string id)
+        {
+            if (OutputType.Module == outputType && id.EndsWith(String.Concat(".", modularizationGuid), StringComparison.Ordinal))
+            {
+                id = id.Substring(0, id.Length - 37);
+            }
+
+            return id;
+        }
+
+        /// <summary>
+        /// Get the source/target and short/long file names from an MSI Filename column.
+        /// </summary>
+        /// <param name="value">The Filename value.</param>
+        /// <returns>An array of strings of length 4.  The contents are: short target, long target, short source, and long source.</returns>
+        /// <remarks>
+        /// If any particular file name part is not parsed, its set to null in the appropriate location of the returned array of strings.
+        /// However, the returned array will always be of length 4.
+        /// </remarks>
+        public static string[] GetNames(string value)
+        {
+            string[] names = new string[4];
+            int targetSeparator = value.IndexOf(":", StringComparison.Ordinal);
+
+            // split source and target
+            string sourceName = null;
+            string targetName = value;
+            if (0 <= targetSeparator)
+            {
+                sourceName = value.Substring(targetSeparator + 1);
+                targetName = value.Substring(0, targetSeparator);
+            }
+
+            // split the source short and long names
+            string sourceLongName = null;
+            if (null != sourceName)
+            {
+                int sourceLongNameSeparator = sourceName.IndexOf("|", StringComparison.Ordinal);
+                if (0 <= sourceLongNameSeparator)
+                {
+                    sourceLongName = sourceName.Substring(sourceLongNameSeparator + 1);
+                    sourceName = sourceName.Substring(0, sourceLongNameSeparator);
+                }
+            }
+
+            // split the target short and long names
+            int targetLongNameSeparator = targetName.IndexOf("|", StringComparison.Ordinal);
+            string targetLongName = null;
+            if (0 <= targetLongNameSeparator)
+            {
+                targetLongName = targetName.Substring(targetLongNameSeparator + 1);
+                targetName = targetName.Substring(0, targetLongNameSeparator);
+            }
+
+            // remove the long source name when its identical to the long source name
+            if (null != sourceName && sourceName == sourceLongName)
+            {
+                sourceLongName = null;
+            }
+
+            // remove the long target name when its identical to the long target name
+            if (null != targetName && targetName == targetLongName)
+            {
+                targetLongName = null;
+            }
+
+            // remove the source names when they are identical to the target names
+            if (sourceName == targetName && sourceLongName == targetLongName)
+            {
+                sourceName = null;
+                sourceLongName = null;
+            }
+
+            // target name(s)
+            if ("." != targetName)
+            {
+                names[0] = targetName;
+            }
+
+            if (null != targetLongName && "." != targetLongName)
+            {
+                names[1] = targetLongName;
+            }
+
+            // source name(s)
+            if (null != sourceName)
+            {
+                names[2] = sourceName;
+            }
+
+            if (null != sourceLongName && "." != sourceLongName)
+            {
+                names[3] = sourceLongName;
+            }
+
+            return names;
+        }
+
+        /// <summary>
+        /// Get a source/target and short/long file name from an MSI Filename column.
+        /// </summary>
+        /// <param name="value">The Filename value.</param>
+        /// <param name="source">true to get a source name; false to get a target name</param>
+        /// <param name="longName">true to get a long name; false to get a short name</param>
+        /// <returns>The name.</returns>
+        public static string GetName(string value, bool source, bool longName)
+        {
+            string[] names = GetNames(value);
+
+            if (source)
+            {
+                if (longName && null != names[3])
+                {
+                    return names[3];
+                }
+                else if (null != names[2])
+                {
+                    return names[2];
+                }
+            }
+
+            if (longName && null != names[1])
+            {
+                return names[1];
+            }
+            else
+            {
+                return names[0];
+            }
+        }
+
+        /// <summary>
         /// Get an attribute value.
         /// </summary>
         /// <param name="sourceLineNumbers">Source line information about the owner element.</param>
@@ -485,14 +625,14 @@ namespace WixToolset
         /// <param name="emptyRule">A rule for the contents of the value. If the contents do not follow the rule, an error is thrown.</param>
         /// <param name="messageHandler">A delegate that receives error messages.</param>
         /// <returns>The attribute's value.</returns>
-        internal static string GetAttributeValue(SourceLineNumber sourceLineNumbers, XAttribute attribute, EmptyRule emptyRule)
+        internal static string GetAttributeValue(IMessaging messaging, SourceLineNumber sourceLineNumbers, XAttribute attribute, EmptyRule emptyRule)
         {
             string value = attribute.Value;
 
             if ((emptyRule == EmptyRule.MustHaveNonWhitespaceCharacters && String.IsNullOrEmpty(value.Trim())) ||
                 (emptyRule == EmptyRule.CanBeWhitespaceOnly && String.IsNullOrEmpty(value)))
             {
-                Messaging.Instance.OnMessage(WixErrors.IllegalEmptyAttributeValue(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName));
+                messaging.Write(ErrorMessages.IllegalEmptyAttributeValue(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName));
                 return String.Empty;
             }
 
@@ -524,15 +664,15 @@ namespace WixToolset
         /// <param name="attribute">The attribute containing the value to get.</param>
         /// <param name="messageHandler">A delegate that receives error messages.</param>
         /// <returns>The attribute's identifier value or a special value if an error occurred.</returns>
-        internal static string GetAttributeIdentifierValue(SourceLineNumber sourceLineNumbers, XAttribute attribute)
+        internal static string GetAttributeIdentifierValue(IMessaging messaging, SourceLineNumber sourceLineNumbers, XAttribute attribute)
         {
-            string value = Common.GetAttributeValue(sourceLineNumbers, attribute, EmptyRule.CanBeWhitespaceOnly);
+            string value = Common.GetAttributeValue(messaging, sourceLineNumbers, attribute, EmptyRule.CanBeWhitespaceOnly);
 
             if (Common.IsIdentifier(value))
             {
                 if (72 < value.Length)
                 {
-                    Messaging.Instance.OnMessage(WixWarnings.IdentifierTooLong(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName, value));
+                    messaging.Write(WarningMessages.IdentifierTooLong(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName, value));
                 }
 
                 return value;
@@ -541,11 +681,11 @@ namespace WixToolset
             {
                 if (value.StartsWith("[", StringComparison.Ordinal) && value.EndsWith("]", StringComparison.Ordinal))
                 {
-                    Messaging.Instance.OnMessage(WixErrors.IllegalIdentifierLooksLikeFormatted(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName, value));
+                    messaging.Write(ErrorMessages.IllegalIdentifierLooksLikeFormatted(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName, value));
                 }
                 else
                 {
-                    Messaging.Instance.OnMessage(WixErrors.IllegalIdentifier(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName, value));
+                    messaging.Write(ErrorMessages.IllegalIdentifier(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName, value));
                 }
 
                 return String.Empty;
@@ -561,11 +701,11 @@ namespace WixToolset
         /// <param name="maximum">The maximum legal value.</param>
         /// <param name="messageHandler">A delegate that receives error messages.</param>
         /// <returns>The attribute's integer value or a special value if an error occurred during conversion.</returns>
-        public static int GetAttributeIntegerValue(SourceLineNumber sourceLineNumbers, XAttribute attribute, int minimum, int maximum)
+        public static int GetAttributeIntegerValue(IMessaging messaging, SourceLineNumber sourceLineNumbers, XAttribute attribute, int minimum, int maximum)
         {
             Debug.Assert(minimum > CompilerConstants.IntegerNotSet && minimum > CompilerConstants.IllegalInteger, "The legal values for this attribute collide with at least one sentinel used during parsing.");
 
-            string value = Common.GetAttributeValue(sourceLineNumbers, attribute, EmptyRule.CanBeWhitespaceOnly);
+            string value = Common.GetAttributeValue(messaging, sourceLineNumbers, attribute, EmptyRule.CanBeWhitespaceOnly);
             int integer = CompilerConstants.IllegalInteger;
 
             if (0 < value.Length)
@@ -574,17 +714,17 @@ namespace WixToolset
                 {
                     if (CompilerConstants.IntegerNotSet == integer || CompilerConstants.IllegalInteger == integer)
                     {
-                        Messaging.Instance.OnMessage(WixErrors.IntegralValueSentinelCollision(sourceLineNumbers, integer));
+                        messaging.Write(ErrorMessages.IntegralValueSentinelCollision(sourceLineNumbers, integer));
                     }
                     else if (minimum > integer || maximum < integer)
                     {
-                        Messaging.Instance.OnMessage(WixErrors.IntegralValueOutOfRange(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName, integer, minimum, maximum));
+                        messaging.Write(ErrorMessages.IntegralValueOutOfRange(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName, integer, minimum, maximum));
                         integer = CompilerConstants.IllegalInteger;
                     }
                 }
                 else
                 {
-                    Messaging.Instance.OnMessage(WixErrors.IllegalIntegerValue(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName, value));
+                    messaging.Write(ErrorMessages.IllegalIntegerValue(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName, value));
                 }
             }
 
@@ -598,9 +738,9 @@ namespace WixToolset
         /// <param name="attribute">The attribute containing the value to get.</param>
         /// <param name="messageHandler">A delegate that receives error messages.</param>
         /// <returns>The attribute's YesNoType value.</returns>
-        internal static YesNoType GetAttributeYesNoValue(SourceLineNumber sourceLineNumbers, XAttribute attribute)
+        internal static YesNoType GetAttributeYesNoValue(IMessaging messaging, SourceLineNumber sourceLineNumbers, XAttribute attribute)
         {
-            string value = Common.GetAttributeValue(sourceLineNumbers, attribute, EmptyRule.CanBeWhitespaceOnly);
+            string value = Common.GetAttributeValue(messaging, sourceLineNumbers, attribute, EmptyRule.CanBeWhitespaceOnly);
             YesNoType yesNo = YesNoType.IllegalValue;
 
             if ("yes".Equals(value) || "true".Equals(value))
@@ -613,7 +753,7 @@ namespace WixToolset
             }
             else
             {
-                Messaging.Instance.OnMessage(WixErrors.IllegalYesNoValue(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName, value));
+                messaging.Write(ErrorMessages.IllegalYesNoValue(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName, value));
             }
 
             return yesNo;
@@ -628,8 +768,8 @@ namespace WixToolset
         /// <returns>The attribute's YesNoType value.</returns>
         internal static string GetInnerText(XElement node)
         {
-            XText text = node.Nodes().Where(n => XmlNodeType.Text == n.NodeType || XmlNodeType.CDATA == n.NodeType).Cast<XText>().FirstOrDefault();
-            return (null == text) ? null : text.Value;
+            var text = node.Nodes().Where(n => XmlNodeType.Text == n.NodeType || XmlNodeType.CDATA == n.NodeType).Cast<XText>().FirstOrDefault();
+            return text?.Value;
         }
 
         /// <summary>
@@ -637,13 +777,13 @@ namespace WixToolset
         /// </summary>
         /// <param name="sourceLineNumbers">Source line information about the owner element.</param>
         /// <param name="attribute">The attribute.</param>
-        public static void UnexpectedAttribute(SourceLineNumber sourceLineNumbers, XAttribute attribute)
+        public static void UnexpectedAttribute(IMessaging messaging, SourceLineNumber sourceLineNumbers, XAttribute attribute)
         {
             // Ignore elements defined by the W3C because we'll assume they are always right.
             if (!((String.IsNullOrEmpty(attribute.Name.NamespaceName) && attribute.Name.LocalName.Equals("xmlns", StringComparison.Ordinal)) ||
                  attribute.Name.NamespaceName.StartsWith(CompilerCore.W3SchemaPrefix.NamespaceName, StringComparison.Ordinal)))
             {
-                Messaging.Instance.OnMessage(WixErrors.UnexpectedAttribute(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName));
+                messaging.Write(ErrorMessages.UnexpectedAttribute(sourceLineNumbers, attribute.Parent.Name.LocalName, attribute.Name.LocalName));
             }
         }
 
@@ -652,13 +792,13 @@ namespace WixToolset
         /// </summary>
         /// <param name="sourceLineNumbers">Source line information about the owner element.</param>
         /// <param name="extensionAttribute">The extension attribute.</param>
-        internal static void UnsupportedExtensionAttribute(SourceLineNumber sourceLineNumbers, XAttribute extensionAttribute)
+        internal static void UnsupportedExtensionAttribute(IMessaging messaging, SourceLineNumber sourceLineNumbers, XAttribute extensionAttribute)
         {
             // Ignore elements defined by the W3C because we'll assume they are always right.
             if (!((String.IsNullOrEmpty(extensionAttribute.Name.NamespaceName) && extensionAttribute.Name.LocalName.Equals("xmlns", StringComparison.Ordinal)) ||
                    extensionAttribute.Name.NamespaceName.StartsWith(CompilerCore.W3SchemaPrefix.NamespaceName, StringComparison.Ordinal)))
             {
-                Messaging.Instance.OnMessage(WixErrors.UnsupportedExtensionAttribute(sourceLineNumbers, extensionAttribute.Parent.Name.LocalName, extensionAttribute.Name.LocalName));
+                messaging.Write(ErrorMessages.UnsupportedExtensionAttribute(sourceLineNumbers, extensionAttribute.Parent.Name.LocalName, extensionAttribute.Name.LocalName));
             }
         }
     }

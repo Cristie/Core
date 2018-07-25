@@ -1,107 +1,83 @@
 // Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
 
-namespace WixToolset
+namespace WixToolset.Core
 {
     using System;
     using System.Collections.Generic;
-    using System.Diagnostics.CodeAnalysis;
-    using System.Globalization;
     using System.Text;
-    using System.Text.RegularExpressions;
     using WixToolset.Data;
-    using WixToolset.Data.Rows;
+    using WixToolset.Data.Bind;
+    using WixToolset.Extensibility.Services;
 
     /// <summary>
     /// WiX variable resolver.
     /// </summary>
-    public sealed class WixVariableResolver
+    internal sealed class WixVariableResolver : IVariableResolver
     {
-        private Dictionary<string, string> wixVariables;
+        private Dictionary<string, BindVariable> locVariables;
+        private Dictionary<string, BindVariable> wixVariables;
+        private Dictionary<string, LocalizedControl> localizedControls;
 
         /// <summary>
         /// Instantiate a new WixVariableResolver.
         /// </summary>
-        public WixVariableResolver(Localizer localizer = null)
+        public WixVariableResolver(IMessaging messaging)
         {
-            this.wixVariables = new Dictionary<string, string>();
-            this.Localizer = localizer;
+            this.locVariables = new Dictionary<string, BindVariable>();
+            this.wixVariables = new Dictionary<string, BindVariable>();
+            this.Codepage = -1;
+            this.Messaging = messaging;
         }
 
-        /// <summary>
-        /// Gets or sets the localizer.
-        /// </summary>
-        /// <value>The localizer.</value>
-        public Localizer Localizer { get; private set; }
+        private IMessaging Messaging { get; }
 
-        /// <summary>
-        /// Gets the count of variables added to the resolver.
-        /// </summary>
-        public int VariableCount => this.wixVariables.Count;
+        public int Codepage { get; private set; }
 
-        /// <summary>
-        /// Add a variable.
-        /// </summary>
-        /// <param name="name">The name of the variable.</param>
-        /// <param name="value">The value of the variable.</param>
-        public void AddVariable(string name, string value)
+        public int VariableCount  => this.wixVariables.Count;
+
+        public void AddLocalization(Localization localization)
         {
-            try
+            if (-1 == this.Codepage)
             {
-                this.wixVariables.Add(name, value);
+                this.Codepage = localization.Codepage;
             }
-            catch (ArgumentException)
-            {
-                Messaging.Instance.OnMessage(WixErrors.WixVariableCollision(null, name));
-            }
-        }
 
-        /// <summary>
-        /// Add a variable.
-        /// </summary>
-        /// <param name="wixVariableRow">The WixVariableRow to add.</param>
-        public void AddVariable(WixVariableRow wixVariableRow)
-        {
-            try
+            foreach (var variable in localization.Variables)
             {
-                this.wixVariables.Add(wixVariableRow.Id, wixVariableRow.Value);
-            }
-            catch (ArgumentException)
-            {
-                if (!wixVariableRow.Overridable) // collision
+                if (!TryAddWixVariable(this.locVariables, variable))
                 {
-                    Messaging.Instance.OnMessage(WixErrors.WixVariableCollision(wixVariableRow.SourceLineNumbers, wixVariableRow.Id));
+                    this.Messaging.Write(ErrorMessages.DuplicateLocalizationIdentifier(variable.SourceLineNumbers, variable.Id));
+                }
+            }
+
+            foreach (KeyValuePair<string, LocalizedControl> localizedControl in localization.LocalizedControls)
+            {
+                if (!this.localizedControls.ContainsKey(localizedControl.Key))
+                {
+                    this.localizedControls.Add(localizedControl.Key, localizedControl.Value);
                 }
             }
         }
 
-        /// <summary>
-        /// Resolve the wix variables in a value.
-        /// </summary>
-        /// <param name="sourceLineNumbers">The source line information for the value.</param>
-        /// <param name="value">The value to resolve.</param>
-        /// <param name="localizationOnly">true to only resolve localization variables; false otherwise.</param>
-        /// <returns>The resolved value.</returns>
-        public string ResolveVariables(SourceLineNumber sourceLineNumbers, string value, bool localizationOnly)
+        public void AddVariable(SourceLineNumber sourceLineNumber, string name, string value, bool overridable)
         {
-            bool isDefault = false;
-            bool delayedResolve = false;
+            var bindVariable = new BindVariable { Id = name, Value = value, Overridable = overridable, SourceLineNumbers = sourceLineNumber };
 
-            return this.ResolveVariables(sourceLineNumbers, value, localizationOnly, ref isDefault, ref delayedResolve);
+            if (!TryAddWixVariable(this.wixVariables, bindVariable))
+            {
+                this.Messaging.Write(ErrorMessages.WixVariableCollision(sourceLineNumber, name));
+            }
         }
 
-        /// <summary>
-        /// Resolve the wix variables in a value.
-        /// </summary>
-        /// <param name="sourceLineNumbers">The source line information for the value.</param>
-        /// <param name="value">The value to resolve.</param>
-        /// <param name="localizationOnly">true to only resolve localization variables; false otherwise.</param>
-        /// <param name="isDefault">true if the resolved value was the default.</param>
-        /// <returns>The resolved value.</returns>
-        public string ResolveVariables(SourceLineNumber sourceLineNumbers, string value, bool localizationOnly, ref bool isDefault)
+        public VariableResolution ResolveVariables(SourceLineNumber sourceLineNumbers, string value, bool localizationOnly)
         {
-            bool delayedResolve = false;
+            return this.ResolveVariables(sourceLineNumbers, value, localizationOnly, true);
+        }
 
-            return this.ResolveVariables(sourceLineNumbers, value, localizationOnly, ref isDefault, ref delayedResolve);
+        public bool TryGetLocalizedControl(string dialog, string control, out LocalizedControl localizedControl)
+        {
+            var key = LocalizedControl.GetKey(dialog, control);
+            return this.localizedControls.TryGetValue(key, out localizedControl);
         }
 
         /// <summary>
@@ -114,39 +90,23 @@ namespace WixToolset
         /// <param name="isDefault">true if the resolved value was the default.</param>
         /// <param name="delayedResolve">true if the value has variables that cannot yet be resolved.</param>
         /// <returns>The resolved value.</returns>
-        public string ResolveVariables(SourceLineNumber sourceLineNumbers, string value, bool localizationOnly, ref bool isDefault, ref bool delayedResolve)
+        internal VariableResolution ResolveVariables(SourceLineNumber sourceLineNumbers, string value, bool localizationOnly, bool errorOnUnknown)
         {
-            return this.ResolveVariables(sourceLineNumbers, value, localizationOnly, true, ref isDefault, ref delayedResolve);
-        }
-
-        /// <summary>
-        /// Resolve the wix variables in a value.
-        /// </summary>
-        /// <param name="sourceLineNumbers">The source line information for the value.</param>
-        /// <param name="value">The value to resolve.</param>
-        /// <param name="localizationOnly">true to only resolve localization variables; false otherwise.</param>
-        /// <param name="errorOnUnknown">true if unknown variables should throw errors.</param>
-        /// <param name="isDefault">true if the resolved value was the default.</param>
-        /// <param name="delayedResolve">true if the value has variables that cannot yet be resolved.</param>
-        /// <returns>The resolved value.</returns>
-        public string ResolveVariables(SourceLineNumber sourceLineNumbers, string value, bool localizationOnly, bool errorOnUnknown, ref bool isDefault, ref bool delayedResolve)
-        {
-            MatchCollection matches = Common.WixVariableRegex.Matches(value);
+            var matches = Common.WixVariableRegex.Matches(value);
 
             // the value is the default unless its substituted further down
-            isDefault = true;
-            delayedResolve = false;
+            var result = new VariableResolution { IsDefault = true, Value = value };
 
             if (0 < matches.Count)
             {
-                StringBuilder sb = new StringBuilder(value);
+                var sb = new StringBuilder(value);
 
                 // notice how this code walks backward through the list
                 // because it modifies the string as we through it
                 for (int i = matches.Count - 1; 0 <= i; i--)
                 {
-                    string variableNamespace = matches[i].Groups["namespace"].Value;
-                    string variableId = matches[i].Groups["fullname"].Value;
+                    var variableNamespace = matches[i].Groups["namespace"].Value;
+                    var variableId = matches[i].Groups["fullname"].Value;
                     string variableDefaultValue = null;
 
                     // get the default value if one was specified
@@ -157,7 +117,7 @@ namespace WixToolset
                         // localization variables to not support inline default values
                         if ("loc" == variableNamespace)
                         {
-                            Messaging.Instance.OnMessage(WixErrors.IllegalInlineLocVariable(sourceLineNumbers, variableId, variableDefaultValue));
+                            this.Messaging.Write(ErrorMessages.IllegalInlineLocVariable(sourceLineNumbers, variableId, variableDefaultValue));
                         }
                     }
 
@@ -176,6 +136,8 @@ namespace WixToolset
                         if (!localizationOnly)
                         {
                             sb.Remove(matches[i].Index - 1, 1);
+
+                            result.UpdatedValue = true;
                         }
                     }
                     else
@@ -187,12 +149,12 @@ namespace WixToolset
                             // warn about deprecated syntax of $(loc.var)
                             if ('$' == sb[matches[i].Index])
                             {
-                                Messaging.Instance.OnMessage(WixWarnings.DeprecatedLocalizationVariablePrefix(sourceLineNumbers, variableId));
+                                this.Messaging.Write(WarningMessages.DeprecatedLocalizationVariablePrefix(sourceLineNumbers, variableId));
                             }
 
-                            if (null != this.Localizer)
+                            if (this.locVariables.TryGetValue(variableId, out var bindVariable))
                             {
-                                resolvedValue = this.Localizer.GetLocalizedValue(variableId);
+                                resolvedValue = bindVariable.Value;
                             }
                         }
                         else if (!localizationOnly && "wix" == variableNamespace)
@@ -200,14 +162,14 @@ namespace WixToolset
                             // illegal syntax of $(wix.var)
                             if ('$' == sb[matches[i].Index])
                             {
-                                Messaging.Instance.OnMessage(WixErrors.IllegalWixVariablePrefix(sourceLineNumbers, variableId));
+                                this.Messaging.Write(ErrorMessages.IllegalWixVariablePrefix(sourceLineNumbers, variableId));
                             }
                             else
                             {
-                                if (this.wixVariables.TryGetValue(variableId, out resolvedValue))
+                                if (this.wixVariables.TryGetValue(variableId, out var bindVariable))
                                 {
-                                    resolvedValue = resolvedValue ?? String.Empty;
-                                    isDefault = false;
+                                    resolvedValue = bindVariable.Value ?? String.Empty;
+                                    result.IsDefault = false;
                                 }
                                 else if (null != variableDefaultValue) // default the resolved value to the inline value if one was specified
                                 {
@@ -219,7 +181,7 @@ namespace WixToolset
                         if ("bind" == variableNamespace)
                         {
                             // can't resolve these yet, but keep track of where we find them so they can be resolved later with less effort
-                            delayedResolve = true;
+                            result.DelayedResolve = true;
                         }
                         else
                         {
@@ -228,102 +190,36 @@ namespace WixToolset
                             {
                                 sb.Remove(matches[i].Index, matches[i].Length);
                                 sb.Insert(matches[i].Index, resolvedValue);
+
+                                result.UpdatedValue = true;
                             }
                             else if ("loc" == variableNamespace && errorOnUnknown) // unresolved loc variable
                             {
-                                Messaging.Instance.OnMessage(WixErrors.LocalizationVariableUnknown(sourceLineNumbers, variableId));
+                                this.Messaging.Write(ErrorMessages.LocalizationVariableUnknown(sourceLineNumbers, variableId));
                             }
                             else if (!localizationOnly && "wix" == variableNamespace && errorOnUnknown) // unresolved wix variable
                             {
-                                Messaging.Instance.OnMessage(WixErrors.WixVariableUnknown(sourceLineNumbers, variableId));
+                                this.Messaging.Write(ErrorMessages.WixVariableUnknown(sourceLineNumbers, variableId));
                             }
                         }
                     }
                 }
 
-                value = sb.ToString();
+                result.Value = sb.ToString();
             }
 
-            return value;
+            return result;
         }
 
-        /// <summary>
-        /// Resolve the delay variables in a value.
-        /// </summary>
-        /// <param name="sourceLineNumbers">The source line information for the value.</param>
-        /// <param name="value">The value to resolve.</param>
-        /// <param name="resolutionData"></param>
-        /// <returns>The resolved value.</returns>
-        [SuppressMessage("Microsoft.Usage", "CA1801:ReviewUnusedParameters", MessageId = "sourceLineNumbers")]
-        [SuppressMessage("Microsoft.Globalization", "CA1308:NormalizeStringsToUppercase", Justification = "This string is not round tripped, and not used for any security decisions")]
-        public static string ResolveDelayedVariables(SourceLineNumber sourceLineNumbers, string value, IDictionary<string, string> resolutionData)
+        private static bool TryAddWixVariable(IDictionary<string, BindVariable> variables, BindVariable variable)
         {
-            MatchCollection matches = Common.WixVariableRegex.Matches(value);
-
-            if (0 < matches.Count)
+            if (!variables.TryGetValue(variable.Id, out var existingWixVariableRow) || (existingWixVariableRow.Overridable && !variable.Overridable))
             {
-                StringBuilder sb = new StringBuilder(value);
-
-                // notice how this code walks backward through the list
-                // because it modifies the string as we go through it
-                for (int i = matches.Count - 1; 0 <= i; i--)
-                {
-                    string variableNamespace = matches[i].Groups["namespace"].Value;
-                    string variableId = matches[i].Groups["fullname"].Value;
-                    string variableDefaultValue = null;
-                    string variableScope = null;
-
-                    // get the default value if one was specified
-                    if (matches[i].Groups["value"].Success)
-                    {
-                        variableDefaultValue = matches[i].Groups["value"].Value;
-                    }
-
-                    // get the scope if one was specified
-                    if (matches[i].Groups["scope"].Success)
-                    {
-                        variableScope = matches[i].Groups["scope"].Value;
-                        if ("bind" == variableNamespace)
-                        {
-                            variableId = matches[i].Groups["name"].Value;
-                        }
-                    }
-
-                    // check for an escape sequence of !! indicating the match is not a variable expression
-                    if (0 < matches[i].Index && '!' == sb[matches[i].Index - 1])
-                    {
-                        sb.Remove(matches[i].Index - 1, 1);
-                    }
-                    else
-                    {
-                        string key = String.Format(CultureInfo.InvariantCulture, "{0}.{1}", variableId, variableScope).ToLower(CultureInfo.InvariantCulture);
-                        string resolvedValue = variableDefaultValue;
-
-                        if (resolutionData.ContainsKey(key))
-                        {
-                            resolvedValue = resolutionData[key];
-                        }
-
-                        if ("bind" == variableNamespace)
-                        {
-                            // insert the resolved value if it was found or display an error
-                            if (null != resolvedValue)
-                            {
-                                sb.Remove(matches[i].Index, matches[i].Length);
-                                sb.Insert(matches[i].Index, resolvedValue);
-                            }
-                            else
-                            {
-                                throw new WixException(WixErrors.UnresolvedBindReference(sourceLineNumbers, value));
-                            }
-                        }
-                    }
-                }
-
-                value = sb.ToString();
+                variables[variable.Id] = variable;
+                return true;
             }
 
-            return value;
+            return variable.Overridable;
         }
     }
 }

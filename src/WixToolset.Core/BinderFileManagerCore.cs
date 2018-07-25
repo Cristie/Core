@@ -6,8 +6,10 @@ namespace WixToolset
     using System.Collections.Generic;
     using System.Linq;
     using WixToolset.Data;
+    using WixToolset.Data.Bind;
     using WixToolset.Extensibility;
 
+#if DEAD_CODE
     public class BinderFileManagerCore : IBinderFileManagerCore
     {
         private Dictionary<string, List<string>>[] bindPaths;
@@ -33,13 +35,13 @@ namespace WixToolset
         /// Gets or sets the active subStorage used for binding.
         /// </summary>
         /// <value>The subStorage object.</value>
-        public SubStorage ActiveSubStorage { get; set; }
+        //public SubStorage ActiveSubStorage { get; set; }
 
         /// <summary>
         /// Gets or sets the output object used for binding.
         /// </summary>
         /// <value>The output object.</value>
-        public Output Output { get; set; }
+        public Intermediate Intermediate { get; set; }
 
         /// <summary>
         /// Gets or sets the path to the temp files location.
@@ -95,14 +97,6 @@ namespace WixToolset
 
             return Enumerable.Empty<string>();
         }
-
-        /// <summary>
-        /// Sends a message to the message delegate if there is one.
-        /// </summary>
-        /// <param name="e">Message event arguments.</param>
-        public void OnMessage(MessageEventArgs e)
-        {
-            Messaging.Instance.OnMessage(e);
-        }
     }
+#endif
 }

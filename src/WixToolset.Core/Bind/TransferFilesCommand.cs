@@ -1,6 +1,6 @@
 // Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
 
-namespace WixToolset.Bind
+namespace WixToolset.Core.Bind
 {
     using System;
     using System.Collections.Generic;
@@ -8,25 +8,35 @@ namespace WixToolset.Bind
     using System.Security.AccessControl;
     using WixToolset.Data;
     using WixToolset.Extensibility;
+    using WixToolset.Extensibility.Data;
+    using WixToolset.Extensibility.Services;
 
-    internal class TransferFilesCommand : ICommand
+    internal class TransferFilesCommand
     {
-        public IEnumerable<IBinderFileManager> FileManagers { private get; set; }
+        public TransferFilesCommand(IMessaging messaging, IEnumerable<ILayoutExtension> extensions, IEnumerable<FileTransfer> fileTransfers, bool suppressAclReset)
+        {
+            this.FileSystem = new FileSystem(extensions);
+            this.Messaging = messaging;
+            this.FileTransfers = fileTransfers;
+            this.SuppressAclReset = suppressAclReset;
+        }
 
-        public IEnumerable<FileTransfer> FileTransfers { private get; set; }
+        private FileSystem FileSystem { get; }
 
-        public bool SuppressAclReset { private get; set; }
+        private IMessaging Messaging { get; }
+
+        private IEnumerable<FileTransfer> FileTransfers { get; }
+
+        private bool SuppressAclReset { get; }
 
         public void Execute()
         {
             List<string> destinationFiles = new List<string>();
 
-            foreach (FileTransfer fileTransfer in this.FileTransfers)
+            foreach (var fileTransfer in this.FileTransfers)
             {
-                string fileSource = this.ResolveFile(fileTransfer.Source, fileTransfer.Type, fileTransfer.SourceLineNumbers, BindStage.Normal);
-
                 // If the source and destination are identical, then there's nothing to do here
-                if (0 == String.Compare(fileSource, fileTransfer.Destination, StringComparison.OrdinalIgnoreCase))
+                if (0 == String.Compare(fileTransfer.Source, fileTransfer.Destination, StringComparison.OrdinalIgnoreCase))
                 {
                     fileTransfer.Redundant = true;
                     continue;
@@ -39,13 +49,13 @@ namespace WixToolset.Bind
                     {
                         if (fileTransfer.Move)
                         {
-                            Messaging.Instance.OnMessage(WixVerboses.MoveFile(fileSource, fileTransfer.Destination));
-                            this.TransferFile(true, fileSource, fileTransfer.Destination);
+                            this.Messaging.Write(VerboseMessages.MoveFile(fileTransfer.Source, fileTransfer.Destination));
+                            this.TransferFile(true, fileTransfer.Source, fileTransfer.Destination);
                         }
                         else
                         {
-                            Messaging.Instance.OnMessage(WixVerboses.CopyFile(fileSource, fileTransfer.Destination));
-                            this.TransferFile(false, fileSource, fileTransfer.Destination);
+                            this.Messaging.Write(VerboseMessages.CopyFile(fileTransfer.Source, fileTransfer.Destination));
+                            this.TransferFile(false, fileTransfer.Source, fileTransfer.Destination);
                         }
 
                         retry = false;
@@ -53,7 +63,7 @@ namespace WixToolset.Bind
                     }
                     catch (FileNotFoundException e)
                     {
-                        throw new WixFileNotFoundException(e.FileName);
+                        throw new WixFileNotFoundException(fileTransfer.SourceLineNumbers, e.FileName);
                     }
                     catch (DirectoryNotFoundException)
                     {
@@ -64,7 +74,7 @@ namespace WixToolset.Bind
                         }
 
                         string directory = Path.GetDirectoryName(fileTransfer.Destination);
-                        Messaging.Instance.OnMessage(WixVerboses.CreateDirectory(directory));
+                        this.Messaging.Write(VerboseMessages.CreateDirectory(directory));
                         Directory.CreateDirectory(directory);
                         retry = true;
                     }
@@ -78,7 +88,7 @@ namespace WixToolset.Bind
 
                         if (File.Exists(fileTransfer.Destination))
                         {
-                            Messaging.Instance.OnMessage(WixVerboses.RemoveDestinationFile(fileTransfer.Destination));
+                            this.Messaging.Write(VerboseMessages.RemoveDestinationFile(fileTransfer.Destination));
 
                             // try to ensure the file is not read-only
                             FileAttributes attributes = File.GetAttributes(fileTransfer.Destination);
@@ -88,7 +98,7 @@ namespace WixToolset.Bind
                             }
                             catch (ArgumentException) // thrown for unauthorized access errors
                             {
-                                throw new WixException(WixErrors.UnauthorizedAccess(fileTransfer.Destination));
+                                throw new WixException(ErrorMessages.UnauthorizedAccess(fileTransfer.Destination));
                             }
 
                             // try to delete the file
@@ -98,7 +108,7 @@ namespace WixToolset.Bind
                             }
                             catch (IOException)
                             {
-                                throw new WixException(WixErrors.FileInUse(null, fileTransfer.Destination));
+                                throw new WixException(ErrorMessages.FileInUse(null, fileTransfer.Destination));
                             }
 
                             retry = true;
@@ -118,7 +128,7 @@ namespace WixToolset.Bind
 
                         if (File.Exists(fileTransfer.Destination))
                         {
-                            Messaging.Instance.OnMessage(WixVerboses.RemoveDestinationFile(fileTransfer.Destination));
+                            this.Messaging.Write(VerboseMessages.RemoveDestinationFile(fileTransfer.Destination));
 
                             // ensure the file is not read-only, then delete it
                             FileAttributes attributes = File.GetAttributes(fileTransfer.Destination);
@@ -129,7 +139,7 @@ namespace WixToolset.Bind
                             }
                             catch (IOException)
                             {
-                                throw new WixException(WixErrors.FileInUse(null, fileTransfer.Destination));
+                                throw new WixException(ErrorMessages.FileInUse(null, fileTransfer.Destination));
                             }
 
                             retry = true;
@@ -160,49 +170,22 @@ namespace WixToolset.Bind
                 }
                 catch
                 {
-                    Messaging.Instance.OnMessage(WixWarnings.UnableToResetAcls());
+                    this.Messaging.Write(WarningMessages.UnableToResetAcls());
                 }
             }
-        }
-
-        private string ResolveFile(string source, string type, SourceLineNumber sourceLineNumbers, BindStage bindStage)
-        {
-            string path = null;
-            foreach (IBinderFileManager fileManager in this.FileManagers)
-            {
-                path = fileManager.ResolveFile(source, type, sourceLineNumbers, bindStage);
-                if (null != path)
-                {
-                    break;
-                }
-            }
-
-            if (null == path)
-            {
-                throw new WixFileNotFoundException(sourceLineNumbers, source, type);
-            }
-
-            return path;
         }
 
         private void TransferFile(bool move, string source, string destination)
         {
             bool complete = false;
-            foreach (IBinderFileManager fileManager in this.FileManagers)
-            {
-                if (move)
-                {
-                    complete = fileManager.MoveFile(source, destination, true);
-                }
-                else
-                {
-                    complete = fileManager.CopyFile(source, destination, true);
-                }
 
-                if (complete)
-                {
-                    break;
-                }
+            if (move)
+            {
+                complete = this.FileSystem.MoveFile(source, destination);
+            }
+            else
+            {
+                complete = this.FileSystem.CopyFile(source, destination);
             }
 
             if (!complete)

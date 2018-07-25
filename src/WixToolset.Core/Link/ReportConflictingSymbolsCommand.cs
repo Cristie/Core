@@ -5,17 +5,22 @@ namespace WixToolset.Link
     using System.Collections.Generic;
     using System.Linq;
     using WixToolset.Data;
+    using WixToolset.Extensibility.Services;
 
-    public class ReportConflictingSymbolsCommand : ICommand
+    public class ReportConflictingSymbolsCommand
     {
-        private IEnumerable<Symbol> possibleConflicts;
-        private IEnumerable<Section> resolvedSections;
-
-        public ReportConflictingSymbolsCommand(IEnumerable<Symbol> possibleConflicts, IEnumerable<Section> resolvedSections)
+        public ReportConflictingSymbolsCommand(IMessaging messaging, IEnumerable<Symbol> possibleConflicts, IEnumerable<IntermediateSection> resolvedSections)
         {
-            this.possibleConflicts = possibleConflicts;
-            this.resolvedSections = resolvedSections;
+            this.Messaging = messaging;
+            this.PossibleConflicts = possibleConflicts;
+            this.ResolvedSections = resolvedSections;
         }
+
+        private IMessaging Messaging { get; }
+
+        private  IEnumerable<Symbol> PossibleConflicts { get; }
+
+        private IEnumerable<IntermediateSection> ResolvedSections { get; }
 
         public void Execute()
         {
@@ -25,21 +30,22 @@ namespace WixToolset.Link
             // symbols are in sections we actually referenced. From the resulting set, show an error for each duplicate
             // (aka: conflicting) symbol. This should catch any rows with colliding primary keys (since symbols are based
             // on the primary keys of rows).
-            List<Symbol> illegalDuplicates = possibleConflicts.Where(s => "WixAction" != s.Row.Table.Name && "WixVariable" != s.Row.Table.Name).ToList();
+            var illegalDuplicates = this.PossibleConflicts.Where(s => s.Row.Definition.Type != TupleDefinitionType.WixAction && s.Row.Definition.Type != TupleDefinitionType.WixVariable).ToList();
             if (0 < illegalDuplicates.Count)
             {
-                HashSet<Section> referencedSections = new HashSet<Section>(resolvedSections);
+                var referencedSections = new HashSet<IntermediateSection>(this.ResolvedSections);
+
                 foreach (Symbol referencedDuplicateSymbol in illegalDuplicates.Where(s => referencedSections.Contains(s.Section)))
                 {
                     List<Symbol> actuallyReferencedDuplicateSymbols = referencedDuplicateSymbol.PossiblyConflictingSymbols.Where(s => referencedSections.Contains(s.Section)).ToList();
 
                     if (actuallyReferencedDuplicateSymbols.Any())
                     {
-                        Messaging.Instance.OnMessage(WixErrors.DuplicateSymbol(referencedDuplicateSymbol.Row.SourceLineNumbers, referencedDuplicateSymbol.Name));
+                        this.Messaging.Write(ErrorMessages.DuplicateSymbol(referencedDuplicateSymbol.Row.SourceLineNumbers, referencedDuplicateSymbol.Name));
 
                         foreach (Symbol duplicate in actuallyReferencedDuplicateSymbols)
                         {
-                            Messaging.Instance.OnMessage(WixErrors.DuplicateSymbol2(duplicate.Row.SourceLineNumbers));
+                            this.Messaging.Write(ErrorMessages.DuplicateSymbol2(duplicate.Row.SourceLineNumbers));
                         }
                     }
                 }

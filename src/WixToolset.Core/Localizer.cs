@@ -1,13 +1,15 @@
 // Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
 
-namespace WixToolset
+namespace WixToolset.Core
 {
     using System;
     using System.Collections.Generic;
     using System.Xml.Linq;
-    using WixToolset.Data;
-    using WixToolset.Data.Rows;
     using WixToolset.Core.Native;
+    using WixToolset.Data;
+    using WixToolset.Data.Bind;
+    using WixToolset.Extensibility;
+    using WixToolset.Extensibility.Services;
 
     /// <summary>
     /// Parses localization files and localizes database values.
@@ -17,56 +19,25 @@ namespace WixToolset
         public static readonly XNamespace WxlNamespace = "http://wixtoolset.org/schemas/v4/wxl";
         private static string XmlElementName = "WixLocalization";
 
-        private Dictionary<string, WixVariableRow> variables;
-        private Dictionary<string, LocalizedControl> localizedControls;
-
-        /// <summary>
-        /// Instantiate a new Localizer.
-        /// </summary>
-        public Localizer(IEnumerable<Localization> localizations)
-        {
-            this.Codepage = -1;
-            this.variables = new Dictionary<string, WixVariableRow>();
-            this.localizedControls = new Dictionary<string, LocalizedControl>();
-
-            foreach (var localization in localizations)
-            {
-                if (-1 == this.Codepage)
-                {
-                    this.Codepage = localization.Codepage;
-                }
-
-                foreach (WixVariableRow wixVariableRow in localization.Variables)
-                {
-                    Localizer.AddWixVariable(this.variables, wixVariableRow);
-                }
-
-                foreach (KeyValuePair<string, LocalizedControl> localizedControl in localization.LocalizedControls)
-                {
-                    if (!this.localizedControls.ContainsKey(localizedControl.Key))
-                    {
-                        this.localizedControls.Add(localizedControl.Key, localizedControl.Value);
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// Gets the codepage.
-        /// </summary>
-        /// <value>The codepage.</value>
-        public int Codepage { get; private set; }
-
         /// <summary>
         /// Loads a localization file from a path on disk.
         /// </summary>
-        /// <param name="path">Path to library file saved on disk.</param>
-        /// <param name="tableDefinitions">Collection containing TableDefinitions to use when loading the localization file.</param>
-        /// <param name="suppressSchema">Suppress xml schema validation while loading.</param>
+        /// <param name="path">Path to localization file saved on disk.</param>
         /// <returns>Returns the loaded localization file.</returns>
-        public static Localization ParseLocalizationFile(string path, TableDefinitionCollection tableDefinitions)
+        public static Localization ParseLocalizationFile(IMessaging messaging, string path)
         {
-            XElement root = XDocument.Load(path).Root;
+            var document = XDocument.Load(path);
+            return ParseLocalizationFile(messaging, document);
+        }
+
+        /// <summary>
+        /// Loads a localization file from memory.
+        /// </summary>
+        /// <param name="document">Document to parse as localization file.</param>
+        /// <returns>Returns the loaded localization file.</returns>
+        public static Localization ParseLocalizationFile(IMessaging messaging, XDocument document)
+        {
+            XElement root = document.Root;
             Localization localization = null;
 
             SourceLineNumber sourceLineNumbers = SourceLineNumber.CreateFromXObject(root);
@@ -74,48 +45,26 @@ namespace WixToolset
             {
                 if (Localizer.WxlNamespace == root.Name.Namespace)
                 {
-                    localization = ParseWixLocalizationElement(root, tableDefinitions);
+                    localization = ParseWixLocalizationElement(messaging, root);
                 }
                 else // invalid or missing namespace
                 {
                     if (null == root.Name.Namespace)
                     {
-                        Messaging.Instance.OnMessage(WixErrors.InvalidWixXmlNamespace(sourceLineNumbers, Localizer.XmlElementName, Localizer.WxlNamespace.NamespaceName));
+                        messaging.Write(ErrorMessages.InvalidWixXmlNamespace(sourceLineNumbers, Localizer.XmlElementName, Localizer.WxlNamespace.NamespaceName));
                     }
                     else
                     {
-                        Messaging.Instance.OnMessage(WixErrors.InvalidWixXmlNamespace(sourceLineNumbers, Localizer.XmlElementName, root.Name.LocalName, Localizer.WxlNamespace.NamespaceName));
+                        messaging.Write(ErrorMessages.InvalidWixXmlNamespace(sourceLineNumbers, Localizer.XmlElementName, root.Name.LocalName, Localizer.WxlNamespace.NamespaceName));
                     }
                 }
             }
             else
             {
-                Messaging.Instance.OnMessage(WixErrors.InvalidDocumentElement(sourceLineNumbers, root.Name.LocalName, "localization", Localizer.XmlElementName));
+                messaging.Write(ErrorMessages.InvalidDocumentElement(sourceLineNumbers, root.Name.LocalName, "localization", Localizer.XmlElementName));
             }
 
             return localization;
-        }
-
-        /// <summary>
-        /// Get a localized data value.
-        /// </summary>
-        /// <param name="id">The name of the localization variable.</param>
-        /// <returns>The localized data value or null if it wasn't found.</returns>
-        public string GetLocalizedValue(string id)
-        {
-            return this.variables.TryGetValue(id, out var wixVariableRow) ? wixVariableRow.Value : null;
-        }
-
-        /// <summary>
-        /// Get a localized control.
-        /// </summary>
-        /// <param name="dialog">The optional id of the control's dialog.</param>
-        /// <param name="control">The id of the control.</param>
-        /// <returns>The localized control or null if it wasn't found.</returns>
-        public LocalizedControl GetLocalizedControl(string dialog, string control)
-        {
-            LocalizedControl localizedControl;
-            return this.localizedControls.TryGetValue(LocalizedControl.GetKey(dialog, control), out localizedControl) ? localizedControl : null;
         }
 
         /// <summary>
@@ -123,16 +72,15 @@ namespace WixToolset
         /// </summary>
         /// <param name="variables">Dictionary of variable rows.</param>
         /// <param name="wixVariableRow">Row to add to the variables dictionary.</param>
-        private static void AddWixVariable(IDictionary<string, WixVariableRow> variables, WixVariableRow wixVariableRow)
+        private static void AddWixVariable(IMessaging messaging, IDictionary<string, BindVariable> variables, BindVariable wixVariableRow)
         {
-            WixVariableRow existingWixVariableRow;
-            if (!variables.TryGetValue(wixVariableRow.Id, out existingWixVariableRow) || (existingWixVariableRow.Overridable && !wixVariableRow.Overridable))
+            if (!variables.TryGetValue(wixVariableRow.Id, out var existingWixVariableRow) || (existingWixVariableRow.Overridable && !wixVariableRow.Overridable))
             {
                 variables[wixVariableRow.Id] = wixVariableRow;
             }
             else if (!wixVariableRow.Overridable)
             {
-                Messaging.Instance.OnMessage(WixErrors.DuplicateLocalizationIdentifier(wixVariableRow.SourceLineNumbers, wixVariableRow.Id));
+                messaging.Write(ErrorMessages.DuplicateLocalizationIdentifier(wixVariableRow.SourceLineNumbers, wixVariableRow.Id));
             }
         }
 
@@ -140,7 +88,7 @@ namespace WixToolset
         /// Parses the WixLocalization element.
         /// </summary>
         /// <param name="node">Element to parse.</param>
-        private static Localization ParseWixLocalizationElement(XElement node, TableDefinitionCollection tableDefinitions)
+        private static Localization ParseWixLocalizationElement(IMessaging messaging, XElement node)
         {
             int codepage = -1;
             string culture = null;
@@ -162,17 +110,17 @@ namespace WixToolset
                             // do nothing; @Language is used for locutil which can't convert Culture to lcid
                             break;
                         default:
-                            Common.UnexpectedAttribute(sourceLineNumbers, attrib);
+                            Common.UnexpectedAttribute(messaging, sourceLineNumbers, attrib);
                             break;
                     }
                 }
                 else
                 {
-                    Common.UnexpectedAttribute(sourceLineNumbers, attrib);
+                    Common.UnexpectedAttribute(messaging, sourceLineNumbers, attrib);
                 }
             }
 
-            Dictionary<string, WixVariableRow> variables = new Dictionary<string,WixVariableRow>();
+            Dictionary<string, BindVariable> variables = new Dictionary<string, BindVariable>();
             Dictionary<string, LocalizedControl> localizedControls = new Dictionary<string, LocalizedControl>();
 
             foreach (XElement child in node.Elements())
@@ -182,32 +130,32 @@ namespace WixToolset
                     switch (child.Name.LocalName)
                     {
                         case "String":
-                            Localizer.ParseString(child, variables, tableDefinitions);
+                            Localizer.ParseString(messaging, child, variables);
                             break;
 
                         case "UI":
-                            Localizer.ParseUI(child, localizedControls);
+                            Localizer.ParseUI(messaging, child, localizedControls);
                             break;
 
                         default:
-                            Messaging.Instance.OnMessage(WixErrors.UnexpectedElement(sourceLineNumbers, node.Name.ToString(), child.Name.ToString()));
+                            messaging.Write(ErrorMessages.UnexpectedElement(sourceLineNumbers, node.Name.ToString(), child.Name.ToString()));
                             break;
                     }
                 }
                 else
                 {
-                    Messaging.Instance.OnMessage(WixErrors.UnsupportedExtensionElement(sourceLineNumbers, node.Name.ToString(), child.Name.ToString()));
+                    messaging.Write(ErrorMessages.UnsupportedExtensionElement(sourceLineNumbers, node.Name.ToString(), child.Name.ToString()));
                 }
             }
 
-            return Messaging.Instance.EncounteredError ? null : new Localization(codepage, culture, variables, localizedControls);
+            return messaging.EncounteredError ? null : new Localization(codepage, culture, variables, localizedControls);
         }
 
         /// <summary>
         /// Parse a localization string into a WixVariableRow.
         /// </summary>
         /// <param name="node">Element to parse.</param>
-        private static void ParseString(XElement node, IDictionary<string, WixVariableRow> variables, TableDefinitionCollection tableDefinitions)
+        private static void ParseString(IMessaging messaging, XElement node, IDictionary<string, BindVariable> variables)
         {
             string id = null;
             bool overridable = false;
@@ -220,22 +168,22 @@ namespace WixToolset
                     switch (attrib.Name.LocalName)
                     {
                         case "Id":
-                            id = Common.GetAttributeIdentifierValue(sourceLineNumbers, attrib);
+                            id = Common.GetAttributeIdentifierValue(messaging, sourceLineNumbers, attrib);
                             break;
                         case "Overridable":
-                            overridable = YesNoType.Yes == Common.GetAttributeYesNoValue(sourceLineNumbers, attrib);
+                            overridable = YesNoType.Yes == Common.GetAttributeYesNoValue(messaging, sourceLineNumbers, attrib);
                             break;
                         case "Localizable":
                             ; // do nothing
                             break;
                         default:
-                            Messaging.Instance.OnMessage(WixErrors.UnexpectedAttribute(sourceLineNumbers, attrib.Parent.Name.ToString(), attrib.Name.ToString()));
+                            messaging.Write(ErrorMessages.UnexpectedAttribute(sourceLineNumbers, attrib.Parent.Name.ToString(), attrib.Name.ToString()));
                             break;
                     }
                 }
                 else
                 {
-                    Messaging.Instance.OnMessage(WixErrors.UnsupportedExtensionAttribute(sourceLineNumbers, attrib.Parent.Name.ToString(), attrib.Name.ToString()));
+                    messaging.Write(ErrorMessages.UnsupportedExtensionAttribute(sourceLineNumbers, attrib.Parent.Name.ToString(), attrib.Name.ToString()));
                 }
             }
 
@@ -243,21 +191,24 @@ namespace WixToolset
 
             if (null == id)
             {
-                Messaging.Instance.OnMessage(WixErrors.ExpectedAttribute(sourceLineNumbers, "String", "Id"));
+                messaging.Write(ErrorMessages.ExpectedAttribute(sourceLineNumbers, "String", "Id"));
             }
             else if (0 == id.Length)
             {
-                Messaging.Instance.OnMessage(WixErrors.IllegalIdentifier(sourceLineNumbers, "String", "Id", 0));
+                messaging.Write(ErrorMessages.IllegalIdentifier(sourceLineNumbers, "String", "Id", 0));
             }
 
-            if (!Messaging.Instance.EncounteredError)
+            if (!messaging.EncounteredError)
             {
-                WixVariableRow wixVariableRow = new WixVariableRow(sourceLineNumbers, tableDefinitions["WixVariable"]);
-                wixVariableRow.Id = id;
-                wixVariableRow.Overridable = overridable;
-                wixVariableRow.Value = value;
+                var variable = new BindVariable
+                {
+                    SourceLineNumbers = sourceLineNumbers,
+                    Id = id,
+                    Overridable = overridable,
+                    Value = value,
+                };
 
-                Localizer.AddWixVariable(variables, wixVariableRow);
+                Localizer.AddWixVariable(messaging, variables, variable);
             }
         }
 
@@ -266,7 +217,7 @@ namespace WixToolset
         /// </summary>
         /// <param name="node">Element to parse.</param>
         /// <param name="localizedControls">Dictionary of localized controls.</param>
-        private static void ParseUI(XElement node, IDictionary<string, LocalizedControl> localizedControls)
+        private static void ParseUI(IMessaging messaging, XElement node, IDictionary<string, LocalizedControl> localizedControls)
         {
             string dialog = null;
             string control = null;
@@ -285,49 +236,49 @@ namespace WixToolset
                     switch (attrib.Name.LocalName)
                     {
                         case "Dialog":
-                            dialog = Common.GetAttributeIdentifierValue(sourceLineNumbers, attrib);
+                            dialog = Common.GetAttributeIdentifierValue(messaging, sourceLineNumbers, attrib);
                             break;
                         case "Control":
-                            control = Common.GetAttributeIdentifierValue(sourceLineNumbers, attrib);
+                            control = Common.GetAttributeIdentifierValue(messaging, sourceLineNumbers, attrib);
                             break;
                         case "X":
-                            x = Common.GetAttributeIntegerValue(sourceLineNumbers, attrib, 0, short.MaxValue);
+                            x = Common.GetAttributeIntegerValue(messaging, sourceLineNumbers, attrib, 0, short.MaxValue);
                             break;
                         case "Y":
-                            y = Common.GetAttributeIntegerValue(sourceLineNumbers, attrib, 0, short.MaxValue);
+                            y = Common.GetAttributeIntegerValue(messaging, sourceLineNumbers, attrib, 0, short.MaxValue);
                             break;
                         case "Width":
-                            width = Common.GetAttributeIntegerValue(sourceLineNumbers, attrib, 0, short.MaxValue);
+                            width = Common.GetAttributeIntegerValue(messaging, sourceLineNumbers, attrib, 0, short.MaxValue);
                             break;
                         case "Height":
-                            height = Common.GetAttributeIntegerValue(sourceLineNumbers, attrib, 0, short.MaxValue);
+                            height = Common.GetAttributeIntegerValue(messaging, sourceLineNumbers, attrib, 0, short.MaxValue);
                             break;
                         case "RightToLeft":
-                            if (YesNoType.Yes == Common.GetAttributeYesNoValue(sourceLineNumbers, attrib))
+                            if (YesNoType.Yes == Common.GetAttributeYesNoValue(messaging, sourceLineNumbers, attrib))
                             {
                                 attribs |= MsiInterop.MsidbControlAttributesRTLRO;
                             }
                             break;
                         case "RightAligned":
-                            if (YesNoType.Yes == Common.GetAttributeYesNoValue(sourceLineNumbers, attrib))
+                            if (YesNoType.Yes == Common.GetAttributeYesNoValue(messaging, sourceLineNumbers, attrib))
                             {
                                 attribs |= MsiInterop.MsidbControlAttributesRightAligned;
                             }
                             break;
                         case "LeftScroll":
-                            if (YesNoType.Yes == Common.GetAttributeYesNoValue(sourceLineNumbers, attrib))
+                            if (YesNoType.Yes == Common.GetAttributeYesNoValue(messaging, sourceLineNumbers, attrib))
                             {
                                 attribs |= MsiInterop.MsidbControlAttributesLeftScroll;
                             }
                             break;
                         default:
-                            Common.UnexpectedAttribute(sourceLineNumbers, attrib);
+                            Common.UnexpectedAttribute(messaging, sourceLineNumbers, attrib);
                             break;
                     }
                 }
                 else
                 {
-                    Common.UnexpectedAttribute(sourceLineNumbers, attrib);
+                    Common.UnexpectedAttribute(messaging, sourceLineNumbers, attrib);
                 }
             }
 
@@ -337,24 +288,24 @@ namespace WixToolset
             {
                 if (MsiInterop.MsidbControlAttributesRTLRO == (attribs & MsiInterop.MsidbControlAttributesRTLRO))
                 {
-                    Messaging.Instance.OnMessage(WixErrors.IllegalAttributeWithoutOtherAttributes(sourceLineNumbers, node.Name.ToString(), "RightToLeft", "Control"));
+                    messaging.Write(ErrorMessages.IllegalAttributeWithoutOtherAttributes(sourceLineNumbers, node.Name.ToString(), "RightToLeft", "Control"));
                 }
                 else if (MsiInterop.MsidbControlAttributesRightAligned == (attribs & MsiInterop.MsidbControlAttributesRightAligned))
                 {
-                    Messaging.Instance.OnMessage(WixErrors.IllegalAttributeWithoutOtherAttributes(sourceLineNumbers, node.Name.ToString(), "RightAligned", "Control"));
+                    messaging.Write(ErrorMessages.IllegalAttributeWithoutOtherAttributes(sourceLineNumbers, node.Name.ToString(), "RightAligned", "Control"));
                 }
                 else if (MsiInterop.MsidbControlAttributesLeftScroll == (attribs & MsiInterop.MsidbControlAttributesLeftScroll))
                 {
-                    Messaging.Instance.OnMessage(WixErrors.IllegalAttributeWithoutOtherAttributes(sourceLineNumbers, node.Name.ToString(), "LeftScroll", "Control"));
+                    messaging.Write(ErrorMessages.IllegalAttributeWithoutOtherAttributes(sourceLineNumbers, node.Name.ToString(), "LeftScroll", "Control"));
                 }
             }
 
             if (String.IsNullOrEmpty(control) && String.IsNullOrEmpty(dialog))
             {
-                Messaging.Instance.OnMessage(WixErrors.ExpectedAttributesWithOtherAttribute(sourceLineNumbers, node.Name.ToString(), "Dialog", "Control"));
+                messaging.Write(ErrorMessages.ExpectedAttributesWithOtherAttribute(sourceLineNumbers, node.Name.ToString(), "Dialog", "Control"));
             }
 
-            if (!Messaging.Instance.EncounteredError)
+            if (!messaging.EncounteredError)
             {
                 LocalizedControl localizedControl = new LocalizedControl(dialog, control, x, y, width, height, attribs, text);
                 string key = localizedControl.GetKey();
@@ -362,11 +313,11 @@ namespace WixToolset
                 {
                     if (String.IsNullOrEmpty(localizedControl.Control))
                     {
-                        Messaging.Instance.OnMessage(WixErrors.DuplicatedUiLocalization(sourceLineNumbers, localizedControl.Dialog));
+                        messaging.Write(ErrorMessages.DuplicatedUiLocalization(sourceLineNumbers, localizedControl.Dialog));
                     }
                     else
                     {
-                        Messaging.Instance.OnMessage(WixErrors.DuplicatedUiLocalization(sourceLineNumbers, localizedControl.Dialog, localizedControl.Control));
+                        messaging.Write(ErrorMessages.DuplicatedUiLocalization(sourceLineNumbers, localizedControl.Dialog, localizedControl.Control));
                     }
                 }
                 else

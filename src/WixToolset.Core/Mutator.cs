@@ -1,10 +1,10 @@
 // Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
 
-namespace WixToolset
+namespace WixToolset.Core
 {
     using System;
     using System.Collections;
-    using WixToolset.Extensibility;
+    using WixToolset.Core.Extensibility;
     using Wix = WixToolset.Data.Serialize;
 
     /// <summary>
@@ -71,7 +71,7 @@ namespace WixToolset
             }
             finally
             {
-                encounteredError = this.Core.EncounteredError;
+                encounteredError = this.Core.Messaging.EncounteredError;
             }
 
             // return the Wix document element only if mutation completed successfully
@@ -98,7 +98,7 @@ namespace WixToolset
 
                     wixString = mutatorExtension.Mutate(wixString);
 
-                    if (String.IsNullOrEmpty(wixString) || this.Core.EncounteredError)
+                    if (String.IsNullOrEmpty(wixString) || this.Core.Messaging.EncounteredError)
                     {
                         break;
                     }
@@ -106,7 +106,7 @@ namespace WixToolset
             }
             finally
             {
-                encounteredError = this.Core.EncounteredError;
+                encounteredError = this.Core.Messaging.EncounteredError;
             }
 
             return encounteredError ? null : wixString;

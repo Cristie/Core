@@ -1,19 +1,31 @@
 // Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information.
 
-namespace WixToolset.Bind
+namespace WixToolset.Core.Bind
 {
+    using System.Collections.Generic;
     using System.IO;
+    using System.Linq;
     using System.Reflection;
     using WixToolset.Data;
+    using WixToolset.Extensibility.Data;
 
-    internal class ExtractEmbeddedFilesCommand : ICommand
+    public class ExtractEmbeddedFilesCommand
     {
-        public ExtractEmbeddedFiles FilesWithEmbeddedFiles { private get; set; }
+        public ExtractEmbeddedFilesCommand(IEnumerable<IExpectedExtractFile> embeddedFiles)
+        {
+            this.FilesWithEmbeddedFiles = embeddedFiles;
+        }
+
+        private IEnumerable<IExpectedExtractFile> FilesWithEmbeddedFiles { get; }
 
         public void Execute()
         {
-            foreach (var baseUri in this.FilesWithEmbeddedFiles.Uris)
+            var group = this.FilesWithEmbeddedFiles.GroupBy(e => e.Uri);
+
+            foreach (var expectedEmbeddedFileByUri in group)
             {
+                var baseUri = expectedEmbeddedFileByUri.Key;
+
                 Stream stream = null;
                 try
                 {
@@ -21,10 +33,10 @@ namespace WixToolset.Bind
                     // a .wixlib embedded in a WixExtension).
                     if ("embeddedresource" == baseUri.Scheme)
                     {
-                        string assemblyPath = Path.GetFullPath(baseUri.LocalPath);
-                        string resourceName = baseUri.Fragment.TrimStart('#');
+                        var assemblyPath = Path.GetFullPath(baseUri.LocalPath);
+                        var resourceName = baseUri.Fragment.TrimStart('#');
 
-                        Assembly assembly = Assembly.LoadFile(assemblyPath);
+                        var assembly = Assembly.LoadFile(assemblyPath);
                         stream = assembly.GetManifestResourceStream(resourceName);
                     }
                     else // normal file (usually a binary .wixlib on disk).
@@ -32,20 +44,22 @@ namespace WixToolset.Bind
                         stream = File.OpenRead(baseUri.LocalPath);
                     }
 
-                    using (FileStructure fs = FileStructure.Read(stream))
+                    using (var fs = FileStructure.Read(stream))
                     {
-                        foreach (var embeddedFile in this.FilesWithEmbeddedFiles.GetExtractFilesForUri(baseUri))
+                        var uniqueIndicies = new SortedSet<int>();
+
+                        foreach (var embeddedFile in expectedEmbeddedFileByUri)
                         {
-                            fs.ExtractEmbeddedFile(embeddedFile.EmbeddedFileIndex, embeddedFile.OutputPath);
+                            if (uniqueIndicies.Add(embeddedFile.EmbeddedFileIndex))
+                            {
+                                fs.ExtractEmbeddedFile(embeddedFile.EmbeddedFileIndex, embeddedFile.OutputPath);
+                            }
                         }
                     }
                 }
                 finally
                 {
-                    if (null != stream)
-                    {
-                        stream.Close();
-                    }
+                    stream?.Close();
                 }
             }
         }

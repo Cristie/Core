@@ -1,0 +1,71 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (c) .NET Foundation and contributors. All rights reserved. Licensed under the Microsoft Reciprocal License. See LICENSE.TXT file in the project root for full license information. -->
+
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netcoreapp2.1</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <NoWarn>NU1701</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="TestData\SimpleModule\data\test.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\SimpleModule\Module.en-us.wxl" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\SimpleModule\Module.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\InstanceTransform\data\test.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\InstanceTransform\Package.en-us.wxl" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\InstanceTransform\Package.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\InstanceTransform\PackageComponents.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\ExampleExtension\data\example.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\ExampleExtension\Package.en-us.wxl" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\ExampleExtension\Package.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\ExampleExtension\PackageComponents.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\SingleFile\data\test.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\SingleFile\Package.en-us.wxl" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\SingleFile\Package.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\SingleFile\PackageComponents.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\IncludePath\data\test.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\IncludePath\data\Package.wxi" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\IncludePath\Package.en-us.wxl" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\IncludePath\Package.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\IncludePath\PackageComponents.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\SingleFileCompressed\data\test.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\SingleFileCompressed\Package.en-us.wxl" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\SingleFileCompressed\Package.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\SingleFileCompressed\PackageComponents.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\MultiFileCompressed\data\test.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\MultiFileCompressed\Package.en-us.wxl" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\MultiFileCompressed\Package.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\MultiFileCompressed\PackageComponents.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\ManualUpgrade\data\test.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\ManualUpgrade\Package.en-us.wxl" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\ManualUpgrade\Package.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\ManualUpgrade\PackageComponents.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\Assembly\data\candle.exe" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\Assembly\Package.en-us.wxl" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\Assembly\Package.wxs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="TestData\Assembly\PackageComponents.wxs" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\WixToolset.Core\WixToolset.Core.csproj" />
+    <ProjectReference Include="..\..\WixToolset.Core.Burn\WixToolset.Core.Burn.csproj" />
+    <ProjectReference Include="..\..\WixToolset.Core.WindowsInstaller\WixToolset.Core.WindowsInstaller.csproj" />
+    <ProjectReference Include="..\..\WixToolset.Core.TestPackage\WixToolset.Core.TestPackage.csproj" />
+    <ProjectReference Include="..\Example.Extension\Example.Extension.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixBuildTools.TestSupport" Version="4.0.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="15.8.0" />
+    <PackageReference Include="xunit" Version="2.4.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.4.0" />
+  </ItemGroup>
+</Project>
